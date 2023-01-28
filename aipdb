@@ -1,12 +1,109 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="AbuseIPDB"
-_APP_VERSION="0.2"
+_APP_VERSION="0.3"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (aipdb) is bash script to manage AbuseIPDB API"
 _APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
 _AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2023"
+# Last update: 28 Jan 2023
 # ====================================================
+
+
+# This script is used to update script from a remote repository based on a given path
+# Usage: script_update [script_path]
+# Example: script_update /opt/maxigpg_public/
+script_update() {
+  local script_name script_path caller script_install_path current_configs new_configs
+
+  script_name="$(basename "${0}")"
+  # might not work with macOS
+  script_path="$(dirname "$(readlink -f "$0")")"
+  caller="${script_name}->${FUNCNAME[0]}"
+  script_install_path="${1}"
+
+  echo "[${caller}]: Updating $(basename -- "$0") to latest version ..."
+  # CD to ${script_path} and if does not exist exit with error
+  cd "${script_path}" || {
+    echo "[${caller}]: ERROR, could not change directory to ${script_path}"
+    exit 1
+  }
+  echo ""
+  echo "START git update information:"
+  git fetch --all
+  check_status "$?"
+  git reset --hard origin/main
+  check_status "$?"
+  echo "END git update information:"
+  echo ""
+
+  echo "[${caller}]: Updating ${script_name} configuration file ..."
+
+  current_configs=$(grep -E '^[A-Za-z0-9_].+=.+$' "${script_install_path}/${script_name}.conf" | awk -F "=" '{print $1}')
+  new_configs=$(grep -E '^[A-Za-z0-9_].+=.+$' "${script_install_path}/${script_name}.conf.sample" | awk -F "=" '{print $1}')
+
+  for new_config in ${new_configs}; do
+    if [[ ${current_configs} =~ ${new_config} ]]; then
+      :
+    else
+      echo "Adding new config: ${new_config} into ${script_install_path}/${script_name}.conf"
+      echo "${new_config}=\"\"" >>"${script_install_path}/${script_name}.conf"
+      check_status "$?"
+    fi
+  done
+
+  # Remove blank lines, comments and sort config file
+  grep -E '^[A-Za-z0-9_].+=.+$' "${script_install_path}/${script_name}.conf" | sort >"${script_install_path}/${script_name}.conf_tmp"
+  mv "${script_install_path}/${script_name}.conf_tmp" "${script_install_path}/${script_name}.conf"
+  check_status "$?"
+
+  echo "[${caller}]: Running ${script_name} --version ..."
+  chmod +x "${script_install_path}/${script_name}"
+  ${script_name} --version
+  check_status "$?"
+
+}
+
+check_update() {
+  local script_name script_path caller temp_file script_install_path
+  script_name="$(basename "${0}")"
+  script_path="$(dirname "$(readlink -f "$0")")"
+  caller="${script_name}->${FUNCNAME[0]}"
+  script_install_path="$(aipdb script-path)"
+  echo "[${caller}]: Checking ${script_name} for update..."
+  temp_file="${TEMP_PATH}/${script_name}"
+  # The github raw hosting will not be updated immediately after I push the update to github. Need to wait about 5 minutes
+  if ! command -v curl &>/dev/null; then
+    [[ "$(get_distro id)" == +(debian|ubuntu|centos|almalinux|rhel) ]] && apt-get install -y curl
+  fi
+  curl -H 'Cache-Control: no-cache' -so "${temp_file}" "https://raw.githubusercontent.com/sofibox/${script_name}/main/${script_name}"
+  check_status "$?"
+  available_version="$(awk -F'=' '/^_APP_VERSION=/{ print $2 }' "${temp_file}" | sed 's/\"//g')"
+  this_version="${_APP_VERSION}"
+  echo ""
+  echo "Installed version is: v${this_version}"
+  echo "Online version is: v${available_version}"
+  echo ""
+  if [[ "ok" == "$(echo | awk "(${available_version} > ${this_version}) { print \"ok\"; }")" ]]; then
+    echo "[${caller}]: A new version of ${script_name} is available."
+
+    read -r -p "[${caller}->input]: Do you want to update ${script_name} to version ${available_version}? [default:Y] [Y/n]: " response
+
+    if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+      script_update "${script_install_path}"
+    else
+      echo "[${caller}->cancel]: Operation aborted!"
+      exit 0
+    fi
+
+  elif [[ "ok" == "$(echo | awk "(${available_version} == ${this_version}) { print \"ok\"; }")" ]]; then
+    echo "[${caller}]: You are using the latest version of ${script_name}."
+  else
+    echo "[${caller}]: You are using a newer version of ${script_name} than the latest available."
+  fi
+
+  rm -f "${temp_file}"
+}
 
 # This function is used to handle exit trap that can accept multiple trap arguments
 # syntax: traps <traps_cleanup_function> SIG1 SIG2 SIG3 ... SIGN[N]
@@ -88,7 +185,7 @@ setup_wizard() {
   if [[ "${answer}" == "y" || "${answer}" == "Y" ]]; then
     # Copy the sample config file from template
     info 1 "Converting config file into unix format"
-    sed -i 's/\r$//' "${CONFIG_FILE}" "${CONFIG_FILE}".sample
+    sed -i 's/\r$//' "${CONFIG_FILE}".sample
     info 1 "Copying sample config file from template ..."
     cp -f "${SCRIPT_PATH}/aipdb.conf.sample" "${CONFIG_FILE}"
     retval=$?
@@ -431,7 +528,7 @@ declare -A LONG_OPT_SPECS
 SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
 SCRIPT_NAME=$(basename -- "$0")
 
-SHORT_OPT_SPECS=":hvpsjc:o:k-:"
+SHORT_OPT_SPECS=":hvpsjc:o:kt:-:"
 LONG_OPT_SPECS=(["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["config"]=1 ["target"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["output"]=1)
 INDEX=$(($# + 1))
 
@@ -518,7 +615,7 @@ while getopts "${SHORT_OPT_SPECS}" OPTION; do
     k | cache)
       USE_OUTPUT_CACHE=true
       ;;
-    ip | ip-address | domain | domain-name | target)
+    t | ip | ip-address | domain | domain-name | target)
       TARGET="${OPTARG[0]}"
       ;;
     category | categories)
@@ -595,10 +692,20 @@ elif [[ "${ACTION^^}" == +(REPORT) ]]; then
   RETVAL=$?
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(-U|--UPDATE|UPDATE) ]]; then
-  echo "script update is not supported yet"
-  # check_update "$@"
-  #RETVAL=$?
-  #exit ${RETVAL}
+  check_update "$@"
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(GET-SCRIPT_PATH|SCRIPT-PATH) ]]; then
+  echo "${SCRIPT_PATH}"
+  exit "$?"
+elif [[ "${ACTION^^}" == +(SHOW-OUTPUT|OUTPUT) ]]; then
+  if command -v "nano" &>/dev/null; then
+    nano -c "${OUTPUT_FILE}"
+    exit "$?"
+  else
+    vi "${OUTPUT_FILE}"
+    exit "$?"
+  fi
 else
   error "Unknown action '${ACTION}'. Please provide a valid action (eg: ${SCRIPT_NAME} +<action> *<option>)"
 fi

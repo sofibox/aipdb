@@ -61,6 +61,10 @@ List of available actions:
             ./aipdb check --target 1.2.3.4
             
             
+            short version:
+            ./aipdb check -t 1.2.3.4
+            
+            
         output:
             [aipdb->info]: [aipdb->scan]: Checking target IP address 1.2.3.4 ...
             AbuseIPDB scan results [new]:

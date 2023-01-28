@@ -34,6 +34,9 @@ check
             ./aipdb check --domain-name sofibox.com
             ./aipdb check --target 1.2.3.4
 
+            short version:
+            ./aipdb check -t 1.2.3.4
+
         Note: The output above did not include reports or comments from users. To include reports and comments, use the --json option.
 report
 

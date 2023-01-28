@@ -1,0 +1,604 @@
+#!/bin/bash
+# ==================================================
+_APP_SPECIFIC_NAME="AbuseIPDB"
+_APP_VERSION="0.2"
+_APP_STATUS="beta"
+_APP_INFO="${_APP_SPECIFIC_NAME} (aipdb) is bash script to manage AbuseIPDB API"
+_APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
+_AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2023"
+# ====================================================
+
+# This function is used to handle exit trap that can accept multiple trap arguments
+# syntax: traps <traps_cleanup_function> SIG1 SIG2 SIG3 ... SIGN[N]
+# eg: traps exit_function QUIT INT TERM EXIT
+traps() {
+  local clean_function
+  clean_function="$1"
+  shift
+  for sig; do
+    trap "${clean_function} ${sig}" "${sig}"
+  done
+}
+
+# This function is used by traps() function to clean exit
+exit_script() {
+  ((CTRL_C_COUNT++))
+  if [[ ${CTRL_C_COUNT} == 1 ]]; then
+    local signal
+    signal="$1"
+    if [ "${signal}" == "INT" ]; then
+      echo "*** Warning, this script has been terminated by user: ${USER}!***"
+    fi
+    rm -rf "${RESPONSE_FILE}"
+    # clean exit and use the last exit code
+    exit
+  fi
+}
+
+# This function is used to display the main help message from readme file.
+# Usage: readme [file]
+# Example: readme /docs/README.md
+readme() {
+  local readme_file="${1}"
+
+  if [ -f "${readme_file}" ]; then
+    cat "${readme_file}"
+    echo ""
+  else
+    echo "Error, the readme file ${readme_file} does not exist."
+    exit 1
+  fi
+}
+
+# Print if verbose is enabled and not in scripting mode
+info() {
+  local caller
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+  if [[ ${VERBOSE} -ge "$1" ]]; then
+    echo "[${caller}]: $2"
+  fi
+}
+
+# Error handling that must exit the script manually
+error() {
+  local caller
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+  [[ "${SCRIPTING}" == false ]] && echo "[${caller}]: $1" >&2
+  [[ "${SCRIPTING}" == true ]] && echo "error"
+  exit 254
+}
+
+# Handling script simple status
+check_status() {
+  local retval
+  retval="$1"
+  if [[ "${retval}" -eq 0 ]]; then
+    info 3 "[ OK ]"
+  else
+    error "[ FAILED ]"
+  fi
+}
+
+# Prompt user to reconfigure script
+setup_wizard() {
+  local caller
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+  echo -ne "[${caller}->input]: Do you want to run setup wizard? [y/n]: "
+  read -r answer
+  if [[ "${answer}" == "y" || "${answer}" == "Y" ]]; then
+    # Copy the sample config file from template
+    info 1 "Converting config file into unix format"
+    sed -i 's/\r$//' "${CONFIG_FILE}" "${CONFIG_FILE}".sample
+    info 1 "Copying sample config file from template ..."
+    cp -f "${SCRIPT_PATH}/aipdb.conf.sample" "${CONFIG_FILE}"
+    retval=$?
+    info 1 "Using config file: ${CONFIG_FILE}"
+    if [ "${retval}" -eq 0 ]; then
+      info 1 "Ok, sample config file copied successfully"
+      echo -ne "Please enter your AIPDB API key: "
+      read -r api_key
+      # insert api_key in config file
+      sed -i "s|^ABUSEIPDB_API_KEY\=.*|ABUSEIPDB_API_KEY=\"${api_key}\"|" "${CONFIG_FILE}"
+      check_status "$?"
+      read_config
+    else
+      error "Sample config file copied failed"
+      exit 1
+    fi
+  else
+    info 1 "Ok, setup wizard skipped"
+  fi
+
+  exit 0
+}
+
+# Read config file
+read_config() {
+  local caller
+
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+
+  if [[ -z "${CONFIG_FILE}" ]]; then
+    info 2 "Using default config file: ${SCRIPT_PATH}/aipdb.conf"
+    CONFIG_FILE="${SCRIPT_PATH}/aipdb.conf"
+  else
+    info 2 "Using config file: ${CONFIG_FILE}"
+  fi
+
+  info 2 "Checking config file ${CONFIG_FILE} ..."
+
+  if [[ -f ${CONFIG_FILE} ]]; then
+    sed -i 's/\r$//' "${CONFIG_FILE}"
+    TEST_SOURCE="$(source "${CONFIG_FILE}" 2>&1 >/dev/null)"
+    RETVAL=$?
+    if [[ ${RETVAL} -eq 0 ]]; then
+      source "${CONFIG_FILE}" 2>/dev/null
+      if [[ -z "${ABUSEIPDB_API_KEY}" ]]; then
+        echo "[${caller}]: Warning, config file ${CONFIG_FILE} does not contain AbuseIPDB API key"
+        setup_wizard
+      fi
+    else
+      info 1 "Warning, config file ${CONFIG_FILE} contains invalid syntax"
+      info 2 "Invalid syntax details:"
+      info 2 "${TEST_SOURCE}"
+      mv "${CONFIG_FILE}" "${CONFIG_FILE}".old
+      info 2 "The old configuration file has been backed up as ${CONFIG_FILE}.old"
+      setup_wizard
+    fi
+  else
+    echo "[${caller}]: Warning, config file ${CONFIG_FILE} not found"
+    setup_wizard
+  fi
+
+}
+
+# This is for checking or scanning IP / domain
+scan() {
+
+  local caller ip_lookup previous_output
+
+  local ip_address is_public ip_version is_whitelisted abuse_confidence_score country_name usage_type isp domain hostnames total_reports num_distinct_users last_reported_at last_scan_date
+
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+  if [ -z "${TARGET}" ]; then
+    error "No target specified (eg: aipdb check --target 1.2.3.4 or aipdb check --domain example.com)"
+  fi
+  ip_lookup=$(resolve "${TARGET}")
+
+  if [[ -z "${ip_lookup}" ]]; then
+    error "[${caller}]: No DNS record found for ${TARGET}"
+  elif [[ "${ip_lookup}" != "${TARGET}" ]]; then
+    info 1 "[${caller}]: Using IP address ${ip_lookup} for target, resolved from ${TARGET}"
+  else
+    info 1 "[${caller}]: Using IP address ${TARGET} for target"
+  fi
+
+  info 0 "[${caller}]: Checking target IP address ${ip_lookup} ..."
+
+  ip_address=""
+  is_public=""
+  ip_version=""
+  is_whitelisted=""
+  abuse_confidence_score=""
+  country_name=""
+  usage_type=""
+  isp=""
+  domain=""
+  hostnames=""
+  total_reports=""
+  num_distinct_users=""
+  last_reported_at=""
+  last_scan_date=""
+
+  if [[ "${USE_OUTPUT_CACHE}" == "true" ]]; then
+    info 2 "[${caller}]: Output cache enabled, checking previous output"
+    # previous_output=$(jq --arg ip_lookup "${ip_lookup}" -r '. | select(.ipAddress==$ip_lookup)' "${OUTPUT_FILE}")
+    previous_output=$(jq -nr --arg ip_lookup "${ip_lookup}" 'last(inputs | select(.ipAddress==$ip_lookup))' "${OUTPUT_FILE}")
+
+    if [[ "${previous_output}" != "null" ]]; then
+      info 2 "[${caller}]: Previous output found, using cached data"
+      ip_address=$(echo "${previous_output}" | jq -rc '.ipAddress')
+      is_public=$(echo "${previous_output}" | jq -rc '.isPublic')
+      ip_version=$(echo "${previous_output}" | jq -rc '.ipVersion')
+      is_whitelisted=$(echo "${previous_output}" | jq -rc '.isWhitelisted')
+      abuse_confidence_score=$(echo "${previous_output}" | jq -rc '.abuseConfidenceScore')
+      country_name=$(echo "${previous_output}" | jq -rc '.countryName')
+      usage_type=$(echo "${previous_output}" | jq -rc '.usageType')
+      isp=$(echo "${previous_output}" | jq -rc '.isp')
+      domain=$(echo "${previous_output}" | jq -rc '.domain')
+      hostnames=$(echo "${previous_output}" | jq -rc '.hostnames')
+      total_reports=$(echo "${previous_output}" | jq -rc '.totalReports')
+      num_distinct_users=$(echo "${previous_output}" | jq -rc '.numDistinctUsers')
+      last_reported_at=$(echo "${previous_output}" | jq -rc '.lastReportedAt')
+      last_scan_date=$(echo "${previous_output}" | jq -rc '.lastScanDate')
+      # Print the above variables in a neat form
+
+      if [[ VERBOSE -ge 0 ]]; then
+        echo "AbuseIPDB scan results [cache]:"
+        echo "-------------"
+        if [ "${JSON}" == "true" ]; then
+          echo "${previous_output}" | jq -r '.'
+        else
+
+          echo "IP address: ${ip_address}"
+          echo "Is public: ${is_public}"
+          echo "IP version: ${ip_version}"
+          echo "Is whitelisted: ${is_whitelisted}"
+          echo "Abuse confidence score: ${abuse_confidence_score}"
+          echo "Country name: ${country_name}"
+          echo "Usage type: ${usage_type}"
+          echo "ISP: ${isp}"
+          echo "Domain: ${domain}"
+          echo "Hostnames: ${hostnames}"
+          echo "Total reports: ${total_reports}"
+          echo "Number of distinct users: ${num_distinct_users}"
+          echo "Last reported at: ${last_reported_at}"
+          echo "Last scan date: $(date -d @"${last_scan_date}")"
+
+        fi
+        echo "-------------"
+
+        exit 0
+      else
+        if [[ ${abuse_confidence_score} =~ ^[0-9]+$ && "${abuse_confidence_score}" -le 100 ]]; then
+          echo "${abuse_confidence_score}"
+          exit "${abuse_confidence_score}"
+        else
+          echo "error"
+          exit 254
+        fi
+      fi
+    else
+      info 2 "[${caller}]: Previous output not found, querying AbuseIPDB API ..."
+    fi
+  else
+    info 2 "[${caller}]: Output cache disabled, skipping previous output check"
+  fi
+
+  # Query new AbuseIPDB API
+  response_code=$(curl -w "%{http_code}" -s -o "${RESPONSE_FILE}" -H "Key: ${ABUSEIPDB_API_KEY}" -H "Accept: application/json" -G "${ABUSEIPDB_API_CHECK_URL}" --data-urlencode "ipAddress=${ip_lookup}" --data "maxAgeInDays=90" --data "verbose")
+  check_status "$?"
+
+  info 3 "Response code is ${response_code}"
+
+  if [ "${response_code}" -eq 200 ]; then
+    ip_address=$(jq -rc '.data.ipAddress' "${RESPONSE_FILE}")
+    is_public=$(jq -rc '.data.isPublic' "${RESPONSE_FILE}")
+    ip_version=$(jq -rc '.data.ipVersion' "${RESPONSE_FILE}")
+    is_whitelisted=$(jq -rc '.data.isWhitelisted' "${RESPONSE_FILE}")
+    abuse_confidence_score=$(jq -rc '.data.abuseConfidenceScore' "${RESPONSE_FILE}")
+    country_name=$(jq -rc '.data.countryName' "${RESPONSE_FILE}")
+    usage_type=$(jq -rc '.data.usageType' "${RESPONSE_FILE}")
+    isp=$(jq -rc '.data.isp' "${RESPONSE_FILE}")
+    domain=$(jq -rc '.data.domain' "${RESPONSE_FILE}")
+    hostnames=$(jq -rc '.data.hostnames' "${RESPONSE_FILE}")
+    total_reports=$(jq -rc '.data.totalReports' "${RESPONSE_FILE}")
+    num_distinct_users=$(jq -rc '.data.numDistinctUsers' "${RESPONSE_FILE}")
+    last_reported_at=$(jq -rc '.data.lastReportedAt' "${RESPONSE_FILE}")
+
+    # Store the result in OUTPUT_FILE as JSON using jq
+    info 3 "Writing to output file ..."
+    jq -cn \
+      --arg ip_address "${ip_address}" \
+      --argjson is_public "${is_public}" \
+      --argjson ip_version "${ip_version}" \
+      --argjson is_whitelisted "${is_whitelisted}" \
+      --argjson abuse_confidence_score "${abuse_confidence_score}" \
+      --arg country_name "${country_name}" \
+      --arg usage_type "${usage_type}" \
+      --arg isp "${isp}" \
+      --arg domain "${domain}" \
+      --argjson hostnames "${hostnames}" \
+      --argjson total_reports "${total_reports}" \
+      --argjson num_distinct_users "${num_distinct_users}" \
+      --arg last_reported_at "${last_reported_at}" \
+      '{"ipAddress":$ip_address,"isPublic":$is_public,"ipVersion":$ip_version,"isWhitelisted":$is_whitelisted,"abuseConfidenceScore":$abuse_confidence_score,"countryName":$country_name,"usageType":$usage_type,"isp":$isp,"domain":$domain,"hostnames":$hostnames,"totalReports":$total_reports,"numDistinctUsers":$num_distinct_users,"lastReportedAt":$last_reported_at, "lastScanDate":now|rint}' >>"${OUTPUT_FILE}"
+
+    # Print the above variables in a neat form
+
+    if [[ VERBOSE -ge 0 ]]; then
+
+      echo "AbuseIPDB scan results [new]:"
+      echo "-------------"
+      if [ "${JSON}" == "true" ]; then
+        jq -r '.data' "${RESPONSE_FILE}"
+      else
+        echo "IP address: ${ip_address}"
+        echo "Is public: ${is_public}"
+        echo "IP version: ${ip_version}"
+        echo "Is whitelisted: ${is_whitelisted}"
+        echo "Abuse confidence score: ${abuse_confidence_score}"
+        echo "Country name: ${country_name}"
+        echo "Usage type: ${usage_type}"
+        echo "ISP: ${isp}"
+        echo "Domain: ${domain}"
+        echo "Hostnames: ${hostnames}"
+        echo "Total reports: ${total_reports}"
+        echo "Number of distinct users: ${num_distinct_users}"
+        echo "Last reported at: ${last_reported_at}"
+        echo "Last scan date: $(date)"
+      fi
+      echo "-------------"
+      exit 0
+    else
+      if [[ ${abuse_confidence_score} =~ ^[0-9]+$ && "${abuse_confidence_score}" -le 100 ]]; then
+        echo "${abuse_confidence_score}"
+        exit "${abuse_confidence_score}"
+      else
+        echo "error"
+        exit 254
+      fi
+    fi
+  else
+
+    if [[ "${VERBOSE}" -ge 0 ]]; then
+      echo "[${caller}]: Error, API return unsuccessful HTTP code ${response_code}"
+      echo "[${caller}]: Error details:"
+      jq -r '.' "${RESPONSE_FILE}"
+    else
+      echo "error"
+    fi
+    exit 254
+  fi
+
+  rm -f "${RESPONSE_FILE}"
+}
+
+# This is for reporting IP / domain
+report() {
+
+  local caller ip_address
+
+  caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
+
+  if [ -z "${TARGET}" ]; then
+    error "No target specified"
+  fi
+
+  ip_address=$(resolve "${TARGET}")
+
+  if [[ -z "${ip_address}" ]]; then
+    error "No DNS record found for ${TARGET}"
+  elif [[ "${ip_address}" != "${TARGET}" ]]; then
+    info 1 "Using IP address ${ip_address} for target, resolved from ${TARGET}"
+  else
+    info 1 "Using IP address ${TARGET} for target"
+  fi
+
+  info 0 "Reporting target IP address ${ip_address} ..."
+  response_code=$(curl -w "%{http_code}" -s -o "${RESPONSE_FILE}" -H "Key: ${ABUSEIPDB_API_KEY}" -H "Accept: application/json" -X POST "${ABUSEIPDB_API_REPORT_URL}" --data-urlencode "ip=${ip_address}" --data-urlencode "categories=${ABUSEIPDB_CATEGORIES}" --data-urlencode "comment=${ABUSEIPDB_COMMENT}")
+  check_status "$?"
+
+  if [ "${response_code}" -eq 200 ]; then
+    ip_address=$(jq -rc '.data.ipAddress' "${RESPONSE_FILE}")
+    abuse_confidence_score=$(jq -rc '.data.abuseConfidenceScore' "${RESPONSE_FILE}")
+
+    if [[ VERBOSE -ge 0 ]]; then
+      if [ "${JSON}" == "true" ]; then
+        # Json output does not contain category and comment by default
+        jq -r '.data' "${RESPONSE_FILE}"
+      else
+        echo ""
+        echo "AbuseIPDB report submitted result:"
+        echo "-------------"
+        echo "IP address: ${ip_address}"
+        echo "Abuse confidence score: ${abuse_confidence_score}"
+        # Add extra output for category and comment
+        echo "Categories: ${ABUSEIPDB_CATEGORIES}"
+        echo "Comment: ${ABUSEIPDB_COMMENT}"
+        echo "-------------"
+      fi
+    else
+      echo "success"
+    fi
+    exit 0
+  else
+    if [[ "${VERBOSE}" -ge 0 ]]; then
+      echo "Error, API return unsuccessful HTTP code ${response_code}"
+      echo "Error details:"
+      jq -r '.' "${RESPONSE_FILE}"
+    else
+      echo "error"
+    fi
+    exit 254
+  fi
+  rm -f "${RESPONSE_FILE}"
+}
+
+# Resolve a given target to an IP
+resolve() {
+
+  local target
+
+  target="$1"
+  if ipcalc -s -c "${target}"; then
+    echo "${target}"
+    return 0
+  else
+    getent hosts "${target}" | awk '{ print $1 ; exit }'
+  fi
+}
+
+############################
+# MAIN FUNCTION START HERE #
+############################
+
+# This script was tested on Debian 11 (Bullseye)
+
+declare SCRIPT_PATH SCRIPT_NAME SHORT_OPT_SPECS INDEX ACTION ARGNUM RETVAL
+declare -A LONG_OPT_SPECS
+
+SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
+SCRIPT_NAME=$(basename -- "$0")
+
+SHORT_OPT_SPECS=":hvpsjc:o:k-:"
+LONG_OPT_SPECS=(["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["config"]=1 ["target"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["output"]=1)
+INDEX=$(($# + 1))
+
+ACTION="$1"
+ARGNUM="$#"
+RETVAL=0
+
+# This variable will be used as global
+VERBOSE=false
+SCRIPTING=false
+
+# Make sure jq and ipcalc are installed
+
+if ! command -v jq &>/dev/null; then
+  echo "jq could not be found. Please install jq first."
+  exit 1
+fi
+
+if ! command -v ipcalc &>/dev/null; then
+  echo "ipcalc could not be found. Please install ipcalc first."
+  exit 1
+fi
+
+RESPONSE_FILE="$(mktemp)"
+
+traps exit_script QUIT INT TERM EXIT
+
+if [ ${ARGNUM} -eq 0 ]; then
+  error "No argument supplied. Please use '${SCRIPT_NAME} --help' for help"
+  exit 1
+fi
+
+shift
+
+while getopts "${SHORT_OPT_SPECS}" OPTION; do
+  while true; do
+    case "${OPTION}" in
+    -)
+      if [[ ${OPTARG[0]} =~ .*=.* ]]; then
+        OPTION=${OPTARG/=*/}
+        ((${#OPTION} <= 1)) && {
+          echo "[${SCRIPT_NAME}]: Error, invalid long option '${OPTION}'" >&2
+          exit 1
+        }
+        if ((LONG_OPT_SPECS[\$OPTION] != 1)); then
+          echo "[${SCRIPT_NAME}]: Error, the option '${OPTION}' does not support this syntax"
+          exit 2
+        fi
+        OPTARG[0]=${OPTARG#*=}
+      else
+        OPTION="${OPTARG[0]}"
+        ((${#OPTION} <= 1)) && {
+          echo "[${SCRIPT_NAME}]: Error, Invalid long option '${OPTION}'"
+          exit 1
+        }
+        OPTARG=("${@:OPTIND:LONG_OPT_SPECS[\$OPTION]}")
+        ((OPTIND += LONG_OPT_SPECS[\$OPTION]))
+        ((OPTIND > INDEX)) && {
+          echo "[${SCRIPT_NAME}]: Error, missing required arguments for option '${OPTION}'"
+          exit 2
+        }
+      fi
+      continue
+      ;;
+    h | help)
+      ACTION="help"
+      ;;
+    v | verbose)
+      VERBOSE=$((VERBOSE + 1))
+      ;;
+    s | scripting)
+      SCRIPTING=true
+      VERBOSE=-1
+      ;;
+    j | json)
+      JSON=true
+      ;;
+    c | config)
+      CONFIG_FILE="${OPTARG[0]}"
+      ;;
+    o | output)
+      OUTPUT_FILE="${OPTARG[0]}"
+      ;;
+    k | cache)
+      USE_OUTPUT_CACHE=true
+      ;;
+    ip | ip-address | domain | domain-name | target)
+      TARGET="${OPTARG[0]}"
+      ;;
+    category | categories)
+      ABUSEIPDB_CATEGORIES="${OPTARG[0]}"
+      ;;
+    comment)
+      ABUSEIPDB_COMMENT="${OPTARG[0]}"
+      ;;
+    ?)
+      echo "[${SCRIPT_NAME}]: Syntax error: Unknown short option '${OPTARG[0]}'"
+      exit 2
+      ;;
+    *)
+      echo "[${SCRIPT_NAME}]: Syntax error: Unknown long option '${OPTION}'"
+      exit 2
+      ;;
+    esac
+    break
+  done
+done
+
+if [[ -z "${OUTPUT_FILE}" ]]; then
+  OUTPUT_FILE="${SCRIPT_PATH}/aipdb_check_output.txt"
+fi
+
+touch "${OUTPUT_FILE}"
+
+RETVAL=$?
+if [[ ${RETVAL} -ne 0 ]]; then
+  echo "Could not output file in that location: ${OUTPUT_FILE}"
+  exit 1
+fi
+
+info 2 "Output location is ${OUTPUT_FILE}"
+
+read_config
+
+# Make sure that the output file is limited to ABUSEIPDB_OUTPUT_MAX_LIMIT (delete the oldest record)
+if [[ -s "${OUTPUT_FILE}" ]]; then
+  TOTAL_OUTPUT=$(jq -r '.ip' "${OUTPUT_FILE}" | wc -l)
+  info 3 "Total output scan: ${TOTAL_OUTPUT}"
+  if [[ "${TOTAL_OUTPUT}" -ge "${ABUSEIPDB_OUTPUT_MAX_LIMIT}" ]]; then
+    ((EXCEED_COUNT = (TOTAL_OUTPUT - ABUSEIPDB_OUTPUT_MAX_LIMIT)))
+    info 2 "Notice, the output file has reached the maximum output by ${EXCEED_COUNT} IP(s). Deleting the oldest IP(s) scan result from the output file ..."
+    # Remove the oldest record from exceed count to total output (add plus 1 here to delete 2 times because we will add a new record later)
+    sed -i "1,${EXCEED_COUNT}d" "${OUTPUT_FILE}"
+  fi
+fi
+
+if [[ "${ACTION^^}" == +(-H|--HELP|HELP) ]]; then
+  readme "${SCRIPT_PATH}/readme.txt"
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(-V|--VERSION|VERSION) ]]; then
+  echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~="$()
+  echo ""
+  echo "Info: ${_APP_INFO}"
+  echo ""
+  echo "Version: ${_APP_VERSION_STATUS}"
+  echo ""
+  echo "${_AUTHOR}"
+  echo ""
+  echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~="
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(-T|--TEST|TEST) ]]; then
+  exit 0
+elif [[ "${ACTION^^}" == +(SCAN|CHECK) ]]; then
+  scan "$@"
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(REPORT) ]]; then
+  report "$@"
+  RETVAL=$?
+  exit ${RETVAL}
+elif [[ "${ACTION^^}" == +(-U|--UPDATE|UPDATE) ]]; then
+  echo "script update is not supported yet"
+  # check_update "$@"
+  #RETVAL=$?
+  #exit ${RETVAL}
+else
+  error "Unknown action '${ACTION}'. Please provide a valid action (eg: ${SCRIPT_NAME} +<action> *<option>)"
+fi

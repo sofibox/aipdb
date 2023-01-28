@@ -1,0 +1,5 @@
+# AIPDB CONFIGURATION
+ABUSEIPDB_OUTPUT_MAX_LIMIT=500
+ABUSEIPDB_API_CHECK_URL="https://api.abuseipdb.com/api/v2/check"
+ABUSEIPDB_API_REPORT_URL="https://api.abuseipdb.com/api/v2/report"
+ABUSEIPDB_API_KEY=""

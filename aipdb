@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="AbuseIPDB"
-_APP_VERSION="0.5"
+_APP_VERSION="0.6"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (aipdb) is bash script to manage AbuseIPDB API"
 _APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
@@ -194,6 +194,10 @@ setup_wizard() {
       echo -ne "Please enter your AIPDB API key: "
       read -r api_key
       # insert api_key in config file
+      sed -i "s|^ABUSEIPDB_REPORT_THRESHOLD\=.*|ABUSEIPDB_REPORT_THRESHOLD=900|" "${CONFIG_FILE}"
+      sed -i "s|^ABUSEIPDB_OUTPUT_MAX_LIMIT\=.*|ABUSEIPDB_OUTPUT_MAX_LIMIT=500|" "${CONFIG_FILE}"
+      sed -i "s|^ABUSEIPDB_API_CHECK_URL\=.*|ABUSEIPDB_API_CHECK_URL=\"https://api.abuseipdb.com/api/v2/check\"|" "${CONFIG_FILE}"
+      sed -i "s|^ABUSEIPDB_API_REPORT_URL\=.*|ABUSEIPDB_API_REPORT_URL=\"https://api.abuseipdb.com/api/v2/report\"|" "${CONFIG_FILE}"
       sed -i "s|^ABUSEIPDB_API_KEY\=.*|ABUSEIPDB_API_KEY=\"${api_key}\"|" "${CONFIG_FILE}"
       check_status "$?"
       read_config

@@ -97,6 +97,7 @@ List of available actions:
 
         example:
             ./aipdb report --ip-address 1.2.3.4 --category 18 --comment "This IP is used for spamming"
+            ./aipdb report --ip-address 1.2.3.4 --categories "1,2,5,18"
             
         output:
             
@@ -109,6 +110,7 @@ List of available actions:
             Categories: 18
             Comment: This IP is used for spamming
         
+        Note: For more information about the categories, please visit https://www.abuseipdb.com/categories
 
 ````
 

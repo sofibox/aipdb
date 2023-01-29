@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="AbuseIPDB"
-_APP_VERSION="0.3"
+_APP_VERSION="0.5"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (aipdb) is bash script to manage AbuseIPDB API"
 _APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
@@ -9,8 +9,7 @@ _AUTHOR="Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2023"
 # Last update: 28 Jan 2023
 # ====================================================
 
-
-# This script is used to update script from a remote repository based on a given path
+# This function is used to update script from a remote repository based on a given path
 # Usage: script_update [script_path]
 # Example: script_update /opt/maxigpg_public/
 script_update() {
@@ -231,8 +230,14 @@ read_config() {
     if [[ ${RETVAL} -eq 0 ]]; then
       source "${CONFIG_FILE}" 2>/dev/null
       if [[ -z "${ABUSEIPDB_API_KEY}" ]]; then
-        echo "[${caller}]: Warning, config file ${CONFIG_FILE} does not contain AbuseIPDB API key"
+        echo "[${caller}]: Error, the variable ABUSEIPDB_API_KEY must be set in the config file"
         setup_wizard
+      fi
+
+      # if ABUSEIPDB_REPORT_THRESHOLD is less than 900, show error and exit. Because AIPDB required minimum 900 seconds for each report.
+      if [[ ${ABUSEIPDB_REPORT_THRESHOLD} -lt 900 ]]; then
+        echo "[${caller}]: Error, the variable ABUSEIPDB_REPORT_THRESHOLD in the config file must be greater or equal to 900"
+        exit 1
       fi
     else
       info 1 "Warning, config file ${CONFIG_FILE} contains invalid syntax"
@@ -254,12 +259,13 @@ scan() {
 
   local caller ip_lookup previous_output
 
-  local ip_address is_public ip_version is_whitelisted abuse_confidence_score country_name usage_type isp domain hostnames total_reports num_distinct_users last_reported_at last_scan_date
+  local target ip_address is_public ip_version is_whitelisted abuse_confidence_score country_name usage_type isp domain hostnames total_reports num_distinct_users last_reported_at last_scan_date
 
   caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
   if [ -z "${TARGET}" ]; then
     error "No target specified (eg: aipdb check --target 1.2.3.4 or aipdb check --domain example.com)"
   fi
+
   ip_lookup=$(resolve "${TARGET}")
 
   if [[ -z "${ip_lookup}" ]]; then
@@ -270,8 +276,22 @@ scan() {
     info 1 "[${caller}]: Using IP address ${TARGET} for target"
   fi
 
+  # Make sure that the output file is limited to ABUSEIPDB_OUTPUT_MAX_LIMIT (delete the oldest record)
+  if [[ -s "${OUTPUT_FILE}" ]]; then
+    local total_output exceed_count
+    total_output=$(jq -r '.ip' "${OUTPUT_FILE}" | wc -l)
+    info 3 "Total output scan: ${total_output}"
+    if [[ "${total_output}" -ge "${ABUSEIPDB_OUTPUT_MAX_LIMIT}" ]]; then
+      ((exceed_count = (total_output - ABUSEIPDB_OUTPUT_MAX_LIMIT)))
+      info 2 "Notice, the output file has reached the maximum output by ${exceed_count} IP(s). Deleting the oldest IP(s) scan result from the output file ..."
+      # Remove the oldest record from exceed count to total output (add plus 1 here to delete 2 times because we will add a new record later)
+      sed -i "1,${exceed_count}d" "${OUTPUT_FILE}"
+    fi
+  fi
+
   info 0 "[${caller}]: Checking target IP address ${ip_lookup} ..."
 
+  target=""
   ip_address=""
   is_public=""
   ip_version=""
@@ -294,6 +314,7 @@ scan() {
 
     if [[ "${previous_output}" != "null" ]]; then
       info 2 "[${caller}]: Previous output found, using cached data"
+      target=$(echo "${previous_output}" | jq -rc '.target')
       ip_address=$(echo "${previous_output}" | jq -rc '.ipAddress')
       is_public=$(echo "${previous_output}" | jq -rc '.isPublic')
       ip_version=$(echo "${previous_output}" | jq -rc '.ipVersion')
@@ -316,7 +337,7 @@ scan() {
         if [ "${JSON}" == "true" ]; then
           echo "${previous_output}" | jq -r '.'
         else
-
+          echo "Target: ${target}"
           echo "IP address: ${ip_address}"
           echo "Is public: ${is_public}"
           echo "IP version: ${ip_version}"
@@ -359,6 +380,7 @@ scan() {
   info 3 "Response code is ${response_code}"
 
   if [ "${response_code}" -eq 200 ]; then
+
     ip_address=$(jq -rc '.data.ipAddress' "${RESPONSE_FILE}")
     is_public=$(jq -rc '.data.isPublic' "${RESPONSE_FILE}")
     ip_version=$(jq -rc '.data.ipVersion' "${RESPONSE_FILE}")
@@ -376,6 +398,7 @@ scan() {
     # Store the result in OUTPUT_FILE as JSON using jq
     info 3 "Writing to output file ..."
     jq -cn \
+      --arg target "${TARGET}" \
       --arg ip_address "${ip_address}" \
       --argjson is_public "${is_public}" \
       --argjson ip_version "${ip_version}" \
@@ -389,7 +412,7 @@ scan() {
       --argjson total_reports "${total_reports}" \
       --argjson num_distinct_users "${num_distinct_users}" \
       --arg last_reported_at "${last_reported_at}" \
-      '{"ipAddress":$ip_address,"isPublic":$is_public,"ipVersion":$ip_version,"isWhitelisted":$is_whitelisted,"abuseConfidenceScore":$abuse_confidence_score,"countryName":$country_name,"usageType":$usage_type,"isp":$isp,"domain":$domain,"hostnames":$hostnames,"totalReports":$total_reports,"numDistinctUsers":$num_distinct_users,"lastReportedAt":$last_reported_at, "lastScanDate":now|rint}' >>"${OUTPUT_FILE}"
+      '{"target":$target,"ipAddress":$ip_address,"isPublic":$is_public,"ipVersion":$ip_version,"isWhitelisted":$is_whitelisted,"abuseConfidenceScore":$abuse_confidence_score,"countryName":$country_name,"usageType":$usage_type,"isp":$isp,"domain":$domain,"hostnames":$hostnames,"totalReports":$total_reports,"numDistinctUsers":$num_distinct_users,"lastReportedAt":$last_reported_at, "lastScanDate":now|rint}' >>"${OUTPUT_FILE}"
 
     # Print the above variables in a neat form
 
@@ -400,6 +423,7 @@ scan() {
       if [ "${JSON}" == "true" ]; then
         jq -r '.data' "${RESPONSE_FILE}"
       else
+        echo "Target: ${TARGET}"
         echo "IP address: ${ip_address}"
         echo "Is public: ${is_public}"
         echo "IP version: ${ip_version}"
@@ -444,7 +468,7 @@ scan() {
 # This is for reporting IP / domain
 report() {
 
-  local caller ip_address
+  local caller ip_address target
 
   caller="${SCRIPT_NAME}->${FUNCNAME[0]}"
 
@@ -452,23 +476,86 @@ report() {
     error "No target specified"
   fi
 
-  ip_address=$(resolve "${TARGET}")
+  ip_lookup=$(resolve "${TARGET}")
 
-  if [[ -z "${ip_address}" ]]; then
-    error "No DNS record found for ${TARGET}"
-  elif [[ "${ip_address}" != "${TARGET}" ]]; then
-    info 1 "Using IP address ${ip_address} for target, resolved from ${TARGET}"
+  if [[ -z "${ip_lookup}" ]]; then
+    error "[${caller}]: No DNS record found for ${TARGET}"
+  elif [[ "${ip_lookup}" != "${TARGET}" ]]; then
+    info 1 "[${caller}]: Using IP address ${ip_lookup} for target, resolved from ${TARGET}"
   else
-    info 1 "Using IP address ${TARGET} for target"
+    info 1 "[${caller}]: Using IP address ${TARGET} for target"
   fi
 
-  info 0 "Reporting target IP address ${ip_address} ..."
-  response_code=$(curl -w "%{http_code}" -s -o "${RESPONSE_FILE}" -H "Key: ${ABUSEIPDB_API_KEY}" -H "Accept: application/json" -X POST "${ABUSEIPDB_API_REPORT_URL}" --data-urlencode "ip=${ip_address}" --data-urlencode "categories=${ABUSEIPDB_CATEGORIES}" --data-urlencode "comment=${ABUSEIPDB_COMMENT}")
+  # Start cache
+  if [[ -s "${AIPDB_REPORT_CACHE_FILE}" ]]; then
+    local current_timestamp max_search_output previous_output last_report_timestamp timestamp_different
+
+    current_timestamp=$(date +%s)
+    info 3 "current_timestamp: ${current_timestamp}"
+
+    max_search_output=25
+
+    # Get all the record timestamp max of 25
+    readarray -t last_report_timestamps <<<"$(jq -rc '.lastReportDate' "${AIPDB_REPORT_CACHE_FILE}" | sort -nr | head -n "${max_search_output}")"
+
+    for last_report_timestamp in "${last_report_timestamps[@]}"; do
+      timestamp_different=$((current_timestamp - last_report_timestamp))
+      info 3 "Timestamp difference: ${timestamp_different}"
+      if [[ "${timestamp_different}" -gt "${ABUSEIPDB_REPORT_THRESHOLD}" ]]; then
+        info 3 "Notice, the found the first record timestamp ${last_report_timestamp} is older than ${ABUSEIPDB_REPORT_THRESHOLD} second(s). Removing the first record output ..."
+        tail -n +2 "${AIPDB_REPORT_CACHE_FILE}" >"${AIPDB_REPORT_CACHE_FILE}.tmp" && mv "${AIPDB_REPORT_CACHE_FILE}.tmp" "${AIPDB_REPORT_CACHE_FILE}"
+        check_status "$?"
+      else
+        info 3 "Skipped, the first record timestamp ${last_report_timestamp} is not older than ${ABUSEIPDB_REPORT_THRESHOLD} second(s)."
+      fi
+    done
+
+    previous_output=$(jq -nr --arg ip_lookup "${ip_lookup}" 'last(inputs | select(.ipAddress==$ip_lookup))' "${AIPDB_REPORT_CACHE_FILE}")
+    if [[ "${previous_output}" != "null" ]]; then
+      info 3 "Notice, found previous reported output for ${ip_lookup}"
+      info 3 "Previous output: ${previous_output}"
+      last_report_timestamp=$(jq -r '.lastReportDate' <<<"${previous_output}")
+      info 3 "Previous last report date timestamp: ${last_report_timestamp}"
+
+      timestamp_different=$((current_timestamp - last_report_timestamp))
+      info 3 "Timestamp difference: ${timestamp_different}"
+      info 3 "ABUSEIPDB_REPORT_THRESHOLD: ${ABUSEIPDB_REPORT_THRESHOLD}"
+
+      # The minimum value of ABUSEIPDB_REPORT_THRESHOLD should be 15 minutes (900 seconds)
+      if [[ "${timestamp_different}" -le "${ABUSEIPDB_REPORT_THRESHOLD}" ]]; then
+        local can_report_again_within
+        can_report_again_within=$((ABUSEIPDB_REPORT_THRESHOLD - timestamp_different))
+        info 0 "Notice, the target IP address ${ip_lookup} has been reported within ${ABUSEIPDB_REPORT_THRESHOLD} seconds, please wait for ${can_report_again_within} seconds before reporting again"
+        exit 0
+      else
+        info 2 "Notice, the target IP address ${ip_lookup} has been reported more than ${ABUSEIPDB_REPORT_THRESHOLD} seconds ago, will report again"
+      fi
+    else
+      info 2 "Notice, no previous reported output for ${ip_lookup} is found"
+    fi
+
+  else
+    info 2 "Notice, the report cache file ${AIPDB_REPORT_CACHE_FILE} is empty"
+  fi
+  # End cache
+
+  info 0 "Reporting target IP address ${ip_lookup} ..."
+  response_code=$(curl -w "%{http_code}" -s -o "${RESPONSE_FILE}" -H "Key: ${ABUSEIPDB_API_KEY}" -H "Accept: application/json" -X POST "${ABUSEIPDB_API_REPORT_URL}" --data-urlencode "ip=${ip_lookup}" --data-urlencode "categories=${ABUSEIPDB_CATEGORIES}" --data-urlencode "comment=${ABUSEIPDB_COMMENT}")
   check_status "$?"
 
   if [ "${response_code}" -eq 200 ]; then
     ip_address=$(jq -rc '.data.ipAddress' "${RESPONSE_FILE}")
     abuse_confidence_score=$(jq -rc '.data.abuseConfidenceScore' "${RESPONSE_FILE}")
+
+    # Store the result in OUTPUT_FILE as JSON using jq
+    info 3 "Writing to output file ..."
+    jq -cn \
+      --arg target "${TARGET}" \
+      --arg ip_address "${ip_address}" \
+      --argjson abuse_confidence_score "${abuse_confidence_score}" \
+      --arg categories "${ABUSEIPDB_CATEGORIES}" \
+      --arg comment "${ABUSEIPDB_COMMENT}" \
+      '{"target":$target,"ipAddress":$ip_address,"abuseConfidenceScore":$abuse_confidence_score,"categories":$categories,"comment":$comment, "lastReportDate":now|rint}' >>"${AIPDB_REPORT_CACHE_FILE}"
 
     if [[ VERBOSE -ge 0 ]]; then
       if [ "${JSON}" == "true" ]; then
@@ -478,11 +565,13 @@ report() {
         echo ""
         echo "AbuseIPDB report submitted result:"
         echo "-------------"
+        echo "Target: ${TARGET}"
         echo "IP address: ${ip_address}"
         echo "Abuse confidence score: ${abuse_confidence_score}"
         # Add extra output for category and comment
         echo "Categories: ${ABUSEIPDB_CATEGORIES}"
         echo "Comment: ${ABUSEIPDB_COMMENT}"
+        echo "Last report date: $(date)"
         echo "-------------"
       fi
     else
@@ -527,6 +616,10 @@ declare -A LONG_OPT_SPECS
 
 SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
 SCRIPT_NAME=$(basename -- "$0")
+
+OS_TEMP_PATH="/tmp"
+
+mkdir -p "${OS_TEMP_PATH}"
 
 SHORT_OPT_SPECS=":hvpsjc:o:kt:-:"
 LONG_OPT_SPECS=(["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["config"]=1 ["target"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["output"]=1)
@@ -637,40 +730,27 @@ while getopts "${SHORT_OPT_SPECS}" OPTION; do
   done
 done
 
+# This file is only use to cache report file to avoid to many request to AbuseIPDB API
+AIPDB_REPORT_CACHE_FILE="${OS_TEMP_PATH}/aipdb_report_cache"
+
 if [[ -z "${OUTPUT_FILE}" ]]; then
   OUTPUT_FILE="${SCRIPT_PATH}/aipdb_check_output.txt"
 fi
 
-touch "${OUTPUT_FILE}"
-
-RETVAL=$?
-if [[ ${RETVAL} -ne 0 ]]; then
-  echo "Could not output file in that location: ${OUTPUT_FILE}"
-  exit 1
-fi
+info 4 "Creating output file and cache file"
+touch "${AIPDB_REPORT_CACHE_FILE}" "${OUTPUT_FILE}"
+check_status "$?"
 
 info 2 "Output location is ${OUTPUT_FILE}"
 
 read_config
-
-# Make sure that the output file is limited to ABUSEIPDB_OUTPUT_MAX_LIMIT (delete the oldest record)
-if [[ -s "${OUTPUT_FILE}" ]]; then
-  TOTAL_OUTPUT=$(jq -r '.ip' "${OUTPUT_FILE}" | wc -l)
-  info 3 "Total output scan: ${TOTAL_OUTPUT}"
-  if [[ "${TOTAL_OUTPUT}" -ge "${ABUSEIPDB_OUTPUT_MAX_LIMIT}" ]]; then
-    ((EXCEED_COUNT = (TOTAL_OUTPUT - ABUSEIPDB_OUTPUT_MAX_LIMIT)))
-    info 2 "Notice, the output file has reached the maximum output by ${EXCEED_COUNT} IP(s). Deleting the oldest IP(s) scan result from the output file ..."
-    # Remove the oldest record from exceed count to total output (add plus 1 here to delete 2 times because we will add a new record later)
-    sed -i "1,${EXCEED_COUNT}d" "${OUTPUT_FILE}"
-  fi
-fi
 
 if [[ "${ACTION^^}" == +(-H|--HELP|HELP) ]]; then
   readme "${SCRIPT_PATH}/readme.txt"
   RETVAL=$?
   exit ${RETVAL}
 elif [[ "${ACTION^^}" == +(-V|--VERSION|VERSION) ]]; then
-  echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~="$()
+  echo "=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~="
   echo ""
   echo "Info: ${_APP_INFO}"
   echo ""

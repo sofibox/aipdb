@@ -3,8 +3,6 @@ aipdb --version
 
 Info: AbuseIPDB (aipdb) is bash script to manage AbuseIPDB API
 
-Version: 0.1-beta
-
 Author: Arafat Ali | Email: arafat@sofibox.com | (C) 2019-2023
 
 =~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=~=
@@ -46,6 +44,7 @@ report
 
         example:
             ./aipdb report --ip-address 1.2.3.4 --category 18 --comment "This IP is used for spamming"
+            ./aipdb report --ip-address 1.2.3.4 --categories 18,19,20 --comment "This IP is used for spamming"
 
 
 Other optional options:

@@ -27,7 +27,7 @@ You can also clone this repository and run aipdb directly from the repository fo
 git clone https://github.com/sofibox/aipdb.git
 cd aipdb
 chmod +x aipdb
-./aipdb
+./aipdb --version
 ````
 
 # Script configuration:
@@ -126,7 +126,7 @@ Other optional options:
         ./aipdb check --ip-address 1.2.3.4 --verbose or ./aipdb check --ip-address 1.2.3.4 -v
     
 -s, --scripting
-    This option is use to enable scripting mode. When this option is enabled, you can the script status code to determine if the script was successful or not.
+    This option is use to enable scripting mode. When this option is enable, you can get the script return value. This is useful when you want to use the script in another script.
    
     eg: 
         ./aipdb check --ip-address 1.2.3.4 --scripting
@@ -143,47 +143,47 @@ Other optional options:
         
     output (sample):
     
-    {
-  "ipAddress": "1.2.3.4",
-  "isPublic": true,
-  "ipVersion": 4,
-  "isWhitelisted": false,
-  "abuseConfidenceScore": 44,
-  "countryCode": "AU",
-  "usageType": "Data Center/Web Hosting/Transit",
-  "isp": "APNIC Pty Ltd",
-  "domain": "apnic.net",
-  "hostnames": [],
-  "countryName": "Australia",
-  "totalReports": 22,
-  "numDistinctUsers": 9,
-  "lastReportedAt": "2023-01-28T05:31:31+00:00",
-  "reports": [
-    {
-      "reportedAt": "2023-01-28T05:31:31+00:00",
-      "comment": "",
-      "categories": [
-        12
-      ],
-      "reporterId": 40115,
-      "reporterCountryCode": "MY",
-      "reporterCountryName": "Malaysia"
-    },
-    {
-      "reportedAt": "2023-01-27T03:24:27+00:00",
-      "comment": "Port Scan",
-      "categories": [
-        14,
-        19,
-        20,
-        23
-      ],
-      "reporterId": 103305,
-      "reporterCountryCode": "JP",
-      "reporterCountryName": "Japan"
-    },
-    
-    ... output was trimmed to save space
+        {
+      "ipAddress": "1.2.3.4",
+      "isPublic": true,
+      "ipVersion": 4,
+      "isWhitelisted": false,
+      "abuseConfidenceScore": 44,
+      "countryCode": "AU",
+      "usageType": "Data Center/Web Hosting/Transit",
+      "isp": "APNIC Pty Ltd",
+      "domain": "apnic.net",
+      "hostnames": [],
+      "countryName": "Australia",
+      "totalReports": 22,
+      "numDistinctUsers": 9,
+      "lastReportedAt": "2023-01-28T05:31:31+00:00",
+      "reports": [
+        {
+          "reportedAt": "2023-01-28T05:31:31+00:00",
+          "comment": "",
+          "categories": [
+            12
+          ],
+          "reporterId": 40115,
+          "reporterCountryCode": "MY",
+          "reporterCountryName": "Malaysia"
+        },
+        {
+          "reportedAt": "2023-01-27T03:24:27+00:00",
+          "comment": "Port Scan",
+          "categories": [
+            14,
+            19,
+            20,
+            23
+          ],
+          "reporterId": 103305,
+          "reporterCountryCode": "JP",
+          "reporterCountryName": "Japan"
+        },
+        
+        ... output was trimmed to save space
     
     
 -c, --config

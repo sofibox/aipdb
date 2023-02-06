@@ -68,7 +68,7 @@ check_update() {
   script_name="$(basename "${0}")"
   script_path="$(dirname "$(readlink -f "$0")")"
   caller="${script_name}->${FUNCNAME[0]}"
-  script_install_path="$(aipdb script-path)"
+  script_install_path="$(${script_name} script-path)"
   echo "[${caller}]: Checking ${script_name} for update..."
   temp_file="${TEMP_PATH}/${script_name}"
   # The github raw hosting will not be updated immediately after I push the update to github. Need to wait about 5 minutes
@@ -704,7 +704,7 @@ while getopts "${SHORT_OPT_SPECS}" OPTION; do
       CONFIG_FILE="${OPTARG[0]}"
       ;;
     o | output)
-      OUTPUT_FILE="${OPTARG[0]}"
+      NEW_OUTPUT_FILE="${OPTARG[0]}"
       ;;
     k | cache)
       USE_OUTPUT_CACHE=true
@@ -734,7 +734,9 @@ done
 # This file is only use to cache report file to avoid to many request to AbuseIPDB API
 AIPDB_REPORT_CACHE_FILE="${OS_TEMP_PATH}/aipdb_report_cache"
 
-if [[ -z "${OUTPUT_FILE}" ]]; then
+if [[ -n "${NEW_OUTPUT_FILE}" ]]; then
+  OUTPUT_FILE="${NEW_OUTPUT_FILE}"
+else
   OUTPUT_FILE="${SCRIPT_PATH}/aipdb_check_output.txt"
 fi
 

@@ -48,7 +48,7 @@ aipdb <+ action> <* options>, where + is required and * is optional
 
 List of available actions:
 
-`check`
+`check` or `scan`
 
 ````
         This action is use to query the AbuseIPDB.com API. Required option is --target or --ip-address

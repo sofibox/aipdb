@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==================================================
 _APP_SPECIFIC_NAME="AbuseIPDB"
-_APP_VERSION="0.7"
+_APP_VERSION="0.8"
 _APP_STATUS="beta"
 _APP_INFO="${_APP_SPECIFIC_NAME} (aipdb) is bash script to manage AbuseIPDB API"
 _APP_VERSION_STATUS="${_APP_VERSION}-${_APP_STATUS}"
@@ -29,7 +29,7 @@ script_update() {
   }
   echo ""
   echo "START git update information:"
-  git fetch --all
+  git fetch --all --depth 1
   check_status "$?"
   git reset --hard origin/main
   check_status "$?"
@@ -622,11 +622,13 @@ SCRIPT_PATH="$(dirname "$(readlink -f "$0")")"
 SCRIPT_NAME=$(basename -- "$0")
 
 OS_TEMP_PATH="/tmp"
+LOG_PATH="${SCRIPT_PATH}/log"
 
 mkdir -p "${OS_TEMP_PATH}"
+mkdir -p "${LOG_PATH}"
 
-SHORT_OPT_SPECS=":hvsjc:o:kt:-:"
-LONG_OPT_SPECS=(["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["config"]=1 ["target"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["output"]=1)
+SHORT_OPT_SPECS=":hvsjc:o:kt:a:-:"
+LONG_OPT_SPECS=(["api-key"]=1 ["ip"]=1 ["ip-address"]=1 ["domain"]=1 ["domain-name"]=1 ["config"]=1 ["target"]=1 ["category"]=1 ["categories"]=1 ["comment"]=1 ["output"]=1)
 INDEX=$(($# + 1))
 
 ACTION="$1"
@@ -700,6 +702,9 @@ while getopts "${SHORT_OPT_SPECS}" OPTION; do
     j | json)
       JSON=true
       ;;
+    a | api-key)
+      API_KEY="${OPTARG[0]}"
+      ;;
     c | config)
       CONFIG_FILE="${OPTARG[0]}"
       ;;
@@ -737,7 +742,7 @@ AIPDB_REPORT_CACHE_FILE="${OS_TEMP_PATH}/aipdb_report_cache"
 if [[ -n "${NEW_OUTPUT_FILE}" ]]; then
   OUTPUT_FILE="${NEW_OUTPUT_FILE}"
 else
-  OUTPUT_FILE="${SCRIPT_PATH}/aipdb_check_output.txt"
+  OUTPUT_FILE="${LOG_PATH}/aipdb_check_output.log"
 fi
 
 info 4 "Creating output file and cache file"
